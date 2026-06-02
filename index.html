@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mod-72 Maximally Even Circle</title>
+<style>
+  :root{
+    --bg:#11131a; --panel:#1b1e29; --ink:#e8ebf2; --muted:#8b93a7;
+    --line:#2c3142; --accent:#5dd6c4; --accent2:#f0a35e; --sel:#ffd04d;
+    --match:#9b8cff; --onset:#5dd6c4; --bold:#e8ebf2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{display:flex;gap:20px;padding:20px;flex-wrap:wrap;align-items:flex-start}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px}
+  .side{flex:1;min-width:280px;max-width:440px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 14px}
+  .group{margin-bottom:16px}
+  .group h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+            color:var(--muted);margin:0 0 8px}
+  .btns{display:flex;flex-wrap:wrap;gap:8px}
+  button{font:inherit;color:var(--ink);background:#222636;border:1px solid var(--line);
+         border-radius:9px;padding:8px 12px;cursor:pointer;transition:.12s}
+  button:hover{border-color:#445;background:#272c40}
+  button.mode.active{background:var(--accent);color:#06221d;border-color:var(--accent);font-weight:700}
+  button.pat{min-width:46px;font-weight:600}
+  button.pat.active{background:var(--accent2);color:#3a1c00;border-color:var(--accent2)}
+  button.pat.match{border-color:var(--match);box-shadow:0 0 0 2px rgba(155,140,255,.45);color:#cfc7ff}
+  button.ghost{background:transparent}
+  .info{background:#0f1117;border:1px solid var(--line);border-radius:10px;
+        padding:12px;font-size:13px;min-height:90px}
+  .info b{color:var(--accent)}
+  .info .tag{display:inline-block;background:#222636;border:1px solid var(--line);
+             border-radius:6px;padding:1px 7px;margin:2px 4px 2px 0;font-size:12px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:8px}
+  .legend i{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px;margin-right:5px}
+  svg{display:block}
+  .pt{cursor:default}
+  .pt.clickable{cursor:pointer}
+  text{font:11px system-ui;fill:var(--muted);user-select:none}
+  text.bold{fill:var(--ink);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stage">
+    <svg id="circle" width="600" height="600" viewBox="0 0 600 600"></svg>
+    <div class="legend">
+      <span><i style="background:var(--bold)"></i>bold note (mult. of 6)</span>
+      <span><i style="background:var(--sel)"></i>selected key / center</span>
+      <span><i style="background:transparent;border:2px solid var(--onset)"></i>pattern onset</span>
+      <span><i style="background:var(--match)"></i>interval endpoint</span>
+    </div>
+  </div>
+
+  <div class="side">
+    <h1>Mod-72 Maximally Even Circle</h1>
+    <p class="sub">72 points · 12 bold notes at multiples of 6 · symmetric ME patterns</p>
+
+    <div class="group">
+      <h2>Modes</h2>
+      <div class="btns">
+        <button class="mode" id="mKey">Change Key</button>
+        <button class="mode" id="mInterval">Interval Mode</button>
+        <button class="mode" id="mScale">Scale Mode</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Patterns (onsets)</h2>
+      <div class="btns" id="patBtns"></div>
+    </div>
+
+    <div class="group">
+      <h2>State</h2>
+      <div class="info" id="info"></div>
+    </div>
+
+    <div class="group">
+      <button class="ghost" id="clearBtn">Clear selection</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ----------------------------------------------------------------------------
+   MODEL
+   - N = 72 points on a circle, index 0..71, point 0 at top, clockwise = +.
+   - Bold / selectable notes: multiples of 6  -> {0,6,...,66}  (12 notes).
+   - Patterns: maximally even sets with an odd onset count k, generated as a
+     symmetric chain of a generating interval g (mod 72) about a CENTER OF
+     SYMMETRY (an onset that sits on the selected bold note).
+       pos(i) = ( center + dir * i * g )  mod 72 ,   i = -m .. m,  m=(k-1)/2
+     dir encodes the generation direction:
+       dir = -1  -> "first generator counter-clockwise" : patterns 5,17,29
+       dir = +1  -> "first generator clockwise"          : patterns 7,19,31
+     (The dot SET is symmetric either way; dir fixes which physical onset is the
+      +1-generator onset, which is what makes cross-pattern interval matching
+      direction-aware.)
+   - Interval matching: an interval between two onsets spans n generators
+     (n = difference of chain indices) and lands at directed position
+       d = (dir * n * g) mod 72.
+     Another pattern T highlights as a MATCH when it can form the SAME interval
+     with the SAME generator count:  |n| <= kT-1  AND  (dirT*n*gT) mod72 == d.
+   -------------------------------------------------------------------------- */
+const N = 72;
+const PATTERNS = {            // k : {g, dir}
+  5 : {g:29, dir:-1},
+  7 : {g:31, dir:+1},
+  17: {g:17, dir:-1},
+  19: {g:19, dir:+1},
+  29: {g:5 , dir:-1},
+  31: {g:7 , dir:+1},
+};
+const PATTERN_KEYS = [5,7,17,19,29,31];
+
+/* ---- state ---- */
+let mode = "key";            // "key" | "interval" | "scale" | null
+let selectedKey = 0;         // center of symmetry (a multiple of 6)
+let activePattern = 5;       // currently displayed pattern (a key of PATTERNS) or null
+let intervalSel = [];        // up to two onset positions selected (interval mode)
+let scaleRoot = null;        // bold note chosen in scale mode
+let scaleTarget = null;      // target pattern chosen in scale mode
+let currentMatches = [];     // pattern keys highlighted as matches
+
+const mod = x => ((x % N) + N) % N;
+
+/* Generate the onsets of pattern p centered at C. Returns [{i,pos}]. */
+function onsetsOf(p, C){
+  const {g,dir} = PATTERNS[p];
+  const k = p, m = (k-1)/2, out = [];
+  for(let i=-m;i<=m;i++) out.push({i, pos: mod(C + dir*i*g)});
+  return out;
+}
+function onsetMap(p, C){           // pos -> chain index i
+  const map = new Map();
+  for(const o of onsetsOf(p,C)) map.set(o.pos, o.i);
+  return map;
+}
+
+/* Patterns T (other than P) that share the interval (posA->posB) in pattern P
+   centered at C, by the rule: same generator count n AND same position d. */
+function matchesForInterval(posA, posB, P, C){
+  const map = onsetMap(P,C);
+  if(!map.has(posA) || !map.has(posB)) return [];
+  const n = map.get(posB) - map.get(posA);
+  if(n === 0) return [];
+  const d = mod(posB - posA);
+  const res = [];
+  for(const T of PATTERN_KEYS){
+    if(T === P) continue;
+    if(Math.abs(n) > T - 1) continue;           // interval not realizable in T
+    if(mod(PATTERNS[T].dir * n * PATTERNS[T].g) === d) res.push(T);
+  }
+  return res;
+}
+
+/* ---------------------------------------------------------------- geometry */
+const cx=300, cy=300, R=242;
+function xy(idx){
+  const t = (idx/N)*2*Math.PI - Math.PI/2;     // 0 at top, clockwise
+  return [cx + R*Math.cos(t), cy + R*Math.sin(t)];
+}
+const svg = document.getElementById("circle");
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs){
+  const e = document.createElementNS(SVGNS, tag);
+  for(const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+/* ----------------------------------------------------------------- render */
+function render(){
+  svg.innerHTML = "";
+  const onsets = activePattern!=null ? onsetsOf(activePattern, selectedKey) : [];
+  const onsetPos = new Set(onsets.map(o=>o.pos));
+
+  // guide circle
+  svg.appendChild(el("circle",{cx,cy,r:R,fill:"none",stroke:"#2c3142","stroke-width":1}));
+
+  // dotted interval line
+  if(intervalSel.length===2){
+    const [a,b] = intervalSel.map(xy);
+    svg.appendChild(el("line",{x1:a[0],y1:a[1],x2:b[0],y2:b[1],
+      stroke:"#9b8cff","stroke-width":2.5,"stroke-dasharray":"3 6","stroke-linecap":"round"}));
+  }
+
+  // onset rings
+  for(const o of onsets){
+    const [x,y] = xy(o.pos);
+    svg.appendChild(el("circle",{cx:x,cy:y,r:13,fill:"none",
+      stroke: o.i===0 ? "#ffd04d" : "#5dd6c4","stroke-width": o.i===0?2.5:2}));
+  }
+
+  // points
+  for(let idx=0; idx<N; idx++){
+    const [x,y] = xy(idx);
+    const isBold = idx % 6 === 0;
+    const isKey  = idx === selectedKey;
+    const isSel  = intervalSel.includes(idx);
+    const isOnset= onsetPos.has(idx);
+
+    let fill = isBold ? "#e8ebf2" : "#4a5167";
+    let r = isBold ? 6.5 : 3.2;
+    if(isSel){ fill = "#9b8cff"; r = 7.5; }
+    else if(isKey){ fill = "#ffd04d"; r = 8; }
+
+    const clickable =
+      (mode==="key"      && isBold) ||
+      (mode==="interval" && isOnset) ||
+      (mode==="scale"    && isBold);
+
+    const c = el("circle",{cx:x,cy:y,r,fill,
+      class:"pt"+(clickable?" clickable":"")});
+    if(clickable){ c.style.cursor="pointer"; c.addEventListener("click",()=>onPoint(idx)); }
+    svg.appendChild(c);
+
+    // label every bold note with its index
+    if(isBold){
+      const [lx,ly] = (()=>{const t=(idx/N)*2*Math.PI-Math.PI/2;
+        return [cx+(R+20)*Math.cos(t), cy+(R+20)*Math.sin(t)+4];})();
+      const tx = el("text",{x:lx,y:ly,"text-anchor":"middle",class:"bold"});
+      tx.textContent = idx;
+      svg.appendChild(tx);
+    }
+  }
+
+  updateButtons();
+  updateInfo();
+}
+
+/* --------------------------------------------------------------- controls */
+function setMode(m){
+  mode = (mode===m) ? null : m;     // toggling an active mode turns it off
+  // switching modes clears transient selections
+  intervalSel = [];
+  scaleRoot = null; scaleTarget = null;
+  currentMatches = [];
+  render();
+}
+
+function onPoint(idx){
+  if(mode==="key"){
+    if(idx % 6 === 0){ selectedKey = idx; render(); }
+    return;
+  }
+  if(mode==="interval"){
+    if(activePattern==null) return;
+    const i = intervalSel.indexOf(idx);
+    if(i>=0) intervalSel.splice(i,1);
+    else { intervalSel.push(idx); if(intervalSel.length>2) intervalSel.shift(); }
+    recomputeMatches();
+    render();
+    return;
+  }
+  if(mode==="scale"){
+    if(idx % 6 === 0){ scaleRoot = idx; tryScaleSelect(); render(); }
+    return;
+  }
+}
+
+function recomputeMatches(){
+  currentMatches = [];
+  if(mode==="interval" && intervalSel.length===2 && activePattern!=null){
+    currentMatches = matchesForInterval(intervalSel[0], intervalSel[1],
+                                        activePattern, selectedKey);
+  }
+}
+
+/* Scale mode: given a bold root note and a target pattern, find the interval
+   (root -> X) within the ACTIVE pattern that "leads to" the target pattern in
+   interval mode, and select those two points. */
+function tryScaleSelect(){
+  intervalSel = []; currentMatches = [];
+  if(scaleRoot==null || scaleTarget==null || activePattern==null) return;
+  const onsets = onsetsOf(activePattern, selectedKey);
+  const root = onsets.find(o=>o.pos===scaleRoot);
+  if(!root) return;                       // root not part of the active pattern
+
+  if(scaleTarget === activePattern){      // generating interval (one generator)
+    const neigh = onsets.find(o=>o.i===root.i+1) || onsets.find(o=>o.i===root.i-1);
+    if(neigh){ intervalSel=[scaleRoot, neigh.pos]; }
+    return;
+  }
+  let best=null;
+  for(const o of onsets){
+    if(o.pos===scaleRoot) continue;
+    if(matchesForInterval(scaleRoot, o.pos, activePattern, selectedKey).includes(scaleTarget)){
+      const dist=Math.abs(o.i-root.i);
+      if(best===null || dist<best.dist) best={pos:o.pos,dist};
+    }
+  }
+  if(best){ intervalSel=[scaleRoot, best.pos]; currentMatches=[scaleTarget]; }
+}
+
+function onPatternBtn(p){
+  if(mode==="interval"){
+    if(currentMatches.includes(p)){    // switch to a matched pattern
+      activePattern = p;
+      intervalSel = []; currentMatches = [];
+    } else {                           // plain pattern change
+      activePattern = p; intervalSel = []; currentMatches = [];
+    }
+    render();
+    return;
+  }
+  if(mode==="scale"){
+    scaleTarget = p;
+    tryScaleSelect();
+    render();
+    return;
+  }
+  // key / no mode
+  activePattern = p;
+  intervalSel = []; currentMatches = [];
+  render();
+}
+
+/* --------------------------------------------------------------- buttons */
+const patWrap = document.getElementById("patBtns");
+PATTERN_KEYS.forEach(p=>{
+  const b=document.createElement("button");
+  b.className="pat"; b.id="pat"+p; b.textContent=p;
+  b.addEventListener("click",()=>onPatternBtn(p));
+  patWrap.appendChild(b);
+});
+document.getElementById("mKey").addEventListener("click",()=>setMode("key"));
+document.getElementById("mInterval").addEventListener("click",()=>setMode("interval"));
+document.getElementById("mScale").addEventListener("click",()=>setMode("scale"));
+document.getElementById("clearBtn").addEventListener("click",()=>{
+  intervalSel=[]; scaleRoot=null; scaleTarget=null; currentMatches=[]; render();
+});
+
+function updateButtons(){
+  document.getElementById("mKey").classList.toggle("active", mode==="key");
+  document.getElementById("mInterval").classList.toggle("active", mode==="interval");
+  document.getElementById("mScale").classList.toggle("active", mode==="scale");
+  PATTERN_KEYS.forEach(p=>{
+    const b=document.getElementById("pat"+p);
+    b.classList.toggle("active", p===activePattern);
+    b.classList.toggle("match", currentMatches.includes(p) && p!==activePattern);
+  });
+}
+
+function updateInfo(){
+  const info=document.getElementById("info");
+  let h="";
+  const modeName={key:"Change Key",interval:"Interval Mode",scale:"Scale Mode"}[mode]||"none";
+  h+=`Mode: <b>${modeName}</b><br>`;
+  h+=`Selected key (center): <b>${selectedKey}</b>`;
+  h+=` &nbsp; Active pattern: <b>${activePattern??"none"}</b><br>`;
+
+  if(mode==="interval"){
+    if(activePattern==null){ h+="Pick a pattern, then click two onsets."; }
+    else if(intervalSel.length<2){
+      h+=`Click two onsets to draw an interval. (${intervalSel.length}/2 selected)`;
+    } else {
+      const map=onsetMap(activePattern,selectedKey);
+      const n=map.get(intervalSel[1])-map.get(intervalSel[0]);
+      const d=mod(intervalSel[1]-intervalSel[0]);
+      h+=`Interval ${intervalSel[0]}→${intervalSel[1]}: `;
+      h+=`<b>${Math.abs(n)}</b> generator(s), position <b>${d}</b> (mod 72).<br>`;
+      h+= currentMatches.length
+        ? "Matches: "+currentMatches.map(p=>`<span class="tag">${p}</span>`).join("")
+          +"<br><span style='color:var(--muted)'>Click a highlighted pattern button to switch.</span>"
+        : "<span style='color:var(--muted)'>No other pattern shares this interval.</span>";
+    }
+  } else if(mode==="scale"){
+    h+=`Root note: <b>${scaleRoot??"—"}</b> &nbsp; Target pattern: <b>${scaleTarget??"—"}</b><br>`;
+    if(scaleRoot!=null && scaleTarget!=null){
+      h+= intervalSel.length===2
+        ? `Selected interval ${intervalSel[0]}→${intervalSel[1]} leads to pattern <b>${scaleTarget}</b>.`
+        : "<span style='color:var(--muted)'>No interval from this note leads to that pattern (root may not be in the active pattern).</span>";
+    } else {
+      h+="<span style='color:var(--muted)'>Pick a bold note and a pattern button.</span>";
+    }
+  } else if(mode==="key"){
+    h+="<span style='color:var(--muted)'>Click a bold note to move the center of symmetry.</span>";
+  } else {
+    h+="<span style='color:var(--muted)'>Select a mode above.</span>";
+  }
+  info.innerHTML=h;
+}
+
+render();
+</script>
+</body>
+</html>
