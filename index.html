@@ -29,6 +29,8 @@
   button.pat{min-width:46px;font-weight:600}
   button.pat.active{background:var(--accent2);color:#3a1c00;border-color:var(--accent2)}
   button.pat.match{border-color:var(--match);box-shadow:0 0 0 2px rgba(155,140,255,.45);color:#cfc7ff}
+  button:disabled{opacity:.35;cursor:default}
+  button:disabled:hover{border-color:var(--line);background:#222636}
   button.ghost{background:transparent}
   .info{background:#0f1117;border:1px solid var(--line);border-radius:10px;
         padding:12px;font-size:13px;min-height:90px}
@@ -53,6 +55,7 @@
       <span><i style="background:var(--sel)"></i>selected key / center</span>
       <span><i style="background:transparent;border:2px solid var(--onset)"></i>pattern onset</span>
       <span><i style="background:var(--match)"></i>interval endpoint</span>
+      <span><i style="background:var(--accent2)"></i>target center (scale mode)</span>
     </div>
   </div>
 
@@ -101,11 +104,18 @@
      (The dot SET is symmetric either way; dir fixes which physical onset is the
       +1-generator onset, which is what makes cross-pattern interval matching
       direction-aware.)
-   - Interval matching: an interval between two onsets spans n generators
-     (n = difference of chain indices) and lands at directed position
-       d = (dir * n * g) mod 72.
-     Another pattern T highlights as a MATCH when it can form the SAME interval
-     with the SAME generator count:  |n| <= kT-1  AND  (dirT*n*gT) mod72 == d.
+   - Generation order alternates outward from the center: chain index +1 is the
+     first-generated onset, -1 the second, +2 the third, ... so the number of
+     generation STEPS needed to produce chain index i is
+       stepNum(i) = i>0 ? 2i-1 : -2i.
+     An interval between two onsets is "created" once BOTH endpoints exist:
+       steps(A,B) = max(stepNum(iA), stepNum(iB)).
+   - Interval matching: another pattern T (centered at some bold note C')
+     matches when both endpoints are onsets of T at their SAME ABSOLUTE
+     positions and T creates the interval in the SAME number of steps.
+     Pressing a matched button keeps the interval and moves the key to C'.
+     (Each matching pattern has exactly one such C'; a pattern never matches
+     itself at another key, since equal g and steps force an equal center.)
    -------------------------------------------------------------------------- */
 const N = 72;
 const PATTERNS = {            // k : {g, dir}
@@ -123,11 +133,28 @@ let mode = "key";            // "key" | "interval" | "scale" | null
 let selectedKey = 0;         // center of symmetry (a multiple of 6)
 let activePattern = 5;       // currently displayed pattern (a key of PATTERNS) or null
 let intervalSel = [];        // up to two onset positions selected (interval mode)
-let scaleRoot = null;        // bold note chosen in scale mode
+let scaleRoot = null;        // target CENTER note chosen in scale mode (any bold note)
 let scaleTarget = null;      // target pattern chosen in scale mode
-let currentMatches = [];     // pattern keys highlighted as matches
+let matchInfo = new Map();   // pattern key -> target center (key) for the match
+let currentSteps = null;     // generation steps of the selected interval
 
 const mod = x => ((x % N) + N) % N;
+const modInverse = {};       // g -> g^-1 mod 72 (all generators are coprime to 72)
+for(const k of [5,7,17,19,29,31]){
+  const g = PATTERNS[k].g;
+  for(let x=1;x<N;x++) if(mod(g*x)===1){ modInverse[g]=x; break; }
+}
+
+/* Steps of alternating generation needed to produce chain index i. */
+const stepNum = i => i>0 ? 2*i-1 : -2*i;
+
+/* Chain index of absolute position pos in pattern T centered at C, or null. */
+function idxOf(pos, T, C){
+  const {g,dir} = PATTERNS[T];
+  let i = mod(dir * modInverse[g] * (pos - C));
+  if(i > N/2) i -= N;
+  return Math.abs(i) <= (T-1)/2 ? i : null;
+}
 
 /* Generate the onsets of pattern p centered at C. Returns [{i,pos}]. */
 function onsetsOf(p, C){
@@ -136,27 +163,25 @@ function onsetsOf(p, C){
   for(let i=-m;i<=m;i++) out.push({i, pos: mod(C + dir*i*g)});
   return out;
 }
-function onsetMap(p, C){           // pos -> chain index i
-  const map = new Map();
-  for(const o of onsetsOf(p,C)) map.set(o.pos, o.i);
-  return map;
-}
-
-/* Patterns T (other than P) that share the interval (posA->posB) in pattern P
-   centered at C, by the rule: same generator count n AND same position d. */
+/* Matches for the interval (posA,posB) of pattern P centered at C.
+   Returns {steps, map} where map is patternKey -> matching center C'.
+   A pattern T matches at center C' (a bold note) when both endpoints are
+   onsets of T at the same absolute positions and T needs the same number of
+   alternating generation steps to create both of them. */
 function matchesForInterval(posA, posB, P, C){
-  const map = onsetMap(P,C);
-  if(!map.has(posA) || !map.has(posB)) return [];
-  const n = map.get(posB) - map.get(posA);
-  if(n === 0) return [];
-  const d = mod(posB - posA);
-  const res = [];
+  const iA = idxOf(posA,P,C), iB = idxOf(posB,P,C);
+  if(iA===null || iB===null || iA===iB) return {steps:null, map:new Map()};
+  const steps = Math.max(stepNum(iA), stepNum(iB));
+  const map = new Map();
   for(const T of PATTERN_KEYS){
-    if(T === P) continue;
-    if(Math.abs(n) > T - 1) continue;           // interval not realizable in T
-    if(mod(PATTERNS[T].dir * n * PATTERNS[T].g) === d) res.push(T);
+    if(T === P) continue;          // a pattern never matches itself (same g+steps => same center)
+    for(let Cp=0; Cp<N; Cp+=6){
+      const jA = idxOf(posA,T,Cp), jB = idxOf(posB,T,Cp);
+      if(jA===null || jB===null) continue;
+      if(Math.max(stepNum(jA), stepNum(jB)) === steps){ map.set(T,Cp); break; }
+    }
   }
-  return res;
+  return {steps, map};
 }
 
 /* ---------------------------------------------------------------- geometry */
@@ -204,9 +229,11 @@ function render(){
     const isSel  = intervalSel.includes(idx);
     const isOnset= onsetPos.has(idx);
 
+    const isRoot = mode==="scale" && idx===scaleRoot;
     let fill = isBold ? "#e8ebf2" : "#4a5167";
     let r = isBold ? 6.5 : 3.2;
     if(isSel){ fill = "#9b8cff"; r = 7.5; }
+    else if(isRoot){ fill = "#f0a35e"; r = 8; }
     else if(isKey){ fill = "#ffd04d"; r = 8; }
 
     const clickable =
@@ -239,7 +266,7 @@ function setMode(m){
   // switching modes clears transient selections
   intervalSel = [];
   scaleRoot = null; scaleTarget = null;
-  currentMatches = [];
+  matchInfo = new Map(); currentSteps = null;
   render();
 }
 
@@ -264,47 +291,48 @@ function onPoint(idx){
 }
 
 function recomputeMatches(){
-  currentMatches = [];
-  if(mode==="interval" && intervalSel.length===2 && activePattern!=null){
-    currentMatches = matchesForInterval(intervalSel[0], intervalSel[1],
-                                        activePattern, selectedKey);
+  matchInfo = new Map(); currentSteps = null;
+  if(intervalSel.length===2 && activePattern!=null){
+    const r = matchesForInterval(intervalSel[0], intervalSel[1],
+                                 activePattern, selectedKey);
+    matchInfo = r.map; currentSteps = r.steps;
   }
 }
 
-/* Scale mode: given a bold root note and a target pattern, find the interval
-   (root -> X) within the ACTIVE pattern that "leads to" the target pattern in
-   interval mode, and select those two points. */
+/* Scale mode: given a TARGET CENTER note (any bold note, need not belong to
+   the active pattern) and a target pattern, find the interval within the
+   ACTIVE pattern that would lead to that pattern centered on that note in
+   interval mode, and select those two points. Prefers the fewest steps. */
 function tryScaleSelect(){
-  intervalSel = []; currentMatches = [];
+  intervalSel = []; matchInfo = new Map(); currentSteps = null;
   if(scaleRoot==null || scaleTarget==null || activePattern==null) return;
+  if(scaleTarget===activePattern) return;   // never reachable (same g+steps => same center)
   const onsets = onsetsOf(activePattern, selectedKey);
-  const root = onsets.find(o=>o.pos===scaleRoot);
-  if(!root) return;                       // root not part of the active pattern
-
-  if(scaleTarget === activePattern){      // generating interval (one generator)
-    const neigh = onsets.find(o=>o.i===root.i+1) || onsets.find(o=>o.i===root.i-1);
-    if(neigh){ intervalSel=[scaleRoot, neigh.pos]; }
-    return;
-  }
-  let best=null;
-  for(const o of onsets){
-    if(o.pos===scaleRoot) continue;
-    if(matchesForInterval(scaleRoot, o.pos, activePattern, selectedKey).includes(scaleTarget)){
-      const dist=Math.abs(o.i-root.i);
-      if(best===null || dist<best.dist) best={pos:o.pos,dist};
+  let best = null;
+  for(let a=0; a<onsets.length; a++){
+    for(let b=a+1; b<onsets.length; b++){
+      const r = matchesForInterval(onsets[a].pos, onsets[b].pos,
+                                   activePattern, selectedKey);
+      if(r.map.get(scaleTarget) === scaleRoot &&
+         (best===null || r.steps < best.steps)){
+        best = {A:onsets[a].pos, B:onsets[b].pos, steps:r.steps};
+      }
     }
   }
-  if(best){ intervalSel=[scaleRoot, best.pos]; currentMatches=[scaleTarget]; }
+  if(best){
+    intervalSel = [best.A, best.B];
+    recomputeMatches();
+  }
 }
 
 function onPatternBtn(p){
   if(mode==="interval"){
-    if(currentMatches.includes(p)){    // switch to a matched pattern
-      activePattern = p;
-      intervalSel = []; currentMatches = [];
-    } else {                           // plain pattern change
-      activePattern = p; intervalSel = []; currentMatches = [];
-    }
+    // only highlighted (matched) buttons are pressable in interval mode;
+    // pressing one keeps the interval and moves pattern AND key to the match
+    if(!matchInfo.has(p)) return;
+    selectedKey = matchInfo.get(p);
+    activePattern = p;
+    recomputeMatches();
     render();
     return;
   }
@@ -316,7 +344,7 @@ function onPatternBtn(p){
   }
   // key / no mode
   activePattern = p;
-  intervalSel = []; currentMatches = [];
+  intervalSel = []; matchInfo = new Map(); currentSteps = null;
   render();
 }
 
@@ -332,7 +360,8 @@ document.getElementById("mKey").addEventListener("click",()=>setMode("key"));
 document.getElementById("mInterval").addEventListener("click",()=>setMode("interval"));
 document.getElementById("mScale").addEventListener("click",()=>setMode("scale"));
 document.getElementById("clearBtn").addEventListener("click",()=>{
-  intervalSel=[]; scaleRoot=null; scaleTarget=null; currentMatches=[]; render();
+  intervalSel=[]; scaleRoot=null; scaleTarget=null;
+  matchInfo=new Map(); currentSteps=null; render();
 });
 
 function updateButtons(){
@@ -342,7 +371,9 @@ function updateButtons(){
   PATTERN_KEYS.forEach(p=>{
     const b=document.getElementById("pat"+p);
     b.classList.toggle("active", p===activePattern);
-    b.classList.toggle("match", currentMatches.includes(p) && p!==activePattern);
+    b.classList.toggle("match", matchInfo.has(p));
+    // in interval mode only highlighted (matched) buttons can be pressed
+    b.disabled = mode==="interval" && !matchInfo.has(p);
   });
 }
 
@@ -359,24 +390,21 @@ function updateInfo(){
     else if(intervalSel.length<2){
       h+=`Click two onsets to draw an interval. (${intervalSel.length}/2 selected)`;
     } else {
-      const map=onsetMap(activePattern,selectedKey);
-      const n=map.get(intervalSel[1])-map.get(intervalSel[0]);
-      const d=mod(intervalSel[1]-intervalSel[0]);
-      h+=`Interval ${intervalSel[0]}→${intervalSel[1]}: `;
-      h+=`<b>${Math.abs(n)}</b> generator(s), position <b>${d}</b> (mod 72).<br>`;
-      h+= currentMatches.length
-        ? "Matches: "+currentMatches.map(p=>`<span class="tag">${p}</span>`).join("")
-          +"<br><span style='color:var(--muted)'>Click a highlighted pattern button to switch.</span>"
-        : "<span style='color:var(--muted)'>No other pattern shares this interval.</span>";
+      h+=`Interval ${intervalSel[0]}–${intervalSel[1]}: `;
+      h+=`created in <b>${currentSteps}</b> generation step(s).<br>`;
+      h+= matchInfo.size
+        ? "Matches: "+[...matchInfo].map(([p,c])=>`<span class="tag">${p} @ key ${c}</span>`).join("")
+          +"<br><span style='color:var(--muted)'>Click a highlighted pattern button to switch (interval is kept; key follows).</span>"
+        : "<span style='color:var(--muted)'>No other pattern creates this interval in the same number of steps.</span>";
     }
   } else if(mode==="scale"){
-    h+=`Root note: <b>${scaleRoot??"—"}</b> &nbsp; Target pattern: <b>${scaleTarget??"—"}</b><br>`;
+    h+=`Target center: <b>${scaleRoot??"—"}</b> &nbsp; Target pattern: <b>${scaleTarget??"—"}</b><br>`;
     if(scaleRoot!=null && scaleTarget!=null){
       h+= intervalSel.length===2
-        ? `Selected interval ${intervalSel[0]}→${intervalSel[1]} leads to pattern <b>${scaleTarget}</b>.`
-        : "<span style='color:var(--muted)'>No interval from this note leads to that pattern (root may not be in the active pattern).</span>";
+        ? `Interval ${intervalSel[0]}–${intervalSel[1]} leads to pattern <b>${scaleTarget}</b> centered at <b>${scaleRoot}</b>.`
+        : "<span style='color:var(--muted)'>No interval in the active pattern leads to that pattern at that center.</span>";
     } else {
-      h+="<span style='color:var(--muted)'>Pick a bold note and a pattern button.</span>";
+      h+="<span style='color:var(--muted)'>Pick a bold note (target center) and a pattern button.</span>";
     }
   } else if(mode==="key"){
     h+="<span style='color:var(--muted)'>Click a bold note to move the center of symmetry.</span>";

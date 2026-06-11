@@ -28,27 +28,34 @@ pos(i) = ( center + dir · i · g )  mod 72 ,   i = -m..m,  m = (k-1)/2
 | 29 | 5  | counter-clockwise (`dir = -1`) |
 | 31 | 7  | clockwise (`dir = +1`) |
 
-The dot set is symmetric either way; `dir` fixes which physical onset is the
-"+1 generator" onset, which is what makes interval matching direction-aware.
+The dot set is symmetric either way; `dir` fixes which physical onset is
+generated first, which is what makes interval matching direction-aware.
+
+Generation alternates outward from the center: chain index `+1` is the
+first-generated onset, `-1` the second, `+2` the third, … so producing chain
+index `i` takes `stepNum(i) = i>0 ? 2i-1 : -2i` steps. An interval is *created*
+once both endpoints exist: `steps(A,B) = max(stepNum(i_A), stepNum(i_B))`.
 
 ## Modes (mutually exclusive; each deactivates **Change Key**)
 - **Change Key** — click a bold note to move the center of symmetry (one at a time).
-- **Interval Mode** — click any two onsets to draw a dotted line. The status panel
-  shows the generator count `n` and position `d = (dir·n·g) mod 72`. Any other
-  pattern that can form the **same interval with the same generator count**
-  (`|n| ≤ T-1` and `(dir_T·n·g_T) mod 72 == d`) is **highlighted**; clicking it
-  switches to that pattern.
-- **Scale Mode** — pick a bold note (root) and a pattern button; the app selects
-  the interval (root → onset) within the active pattern that would lead to that
-  target pattern in Interval Mode, if one exists.
+- **Interval Mode** — click any two onsets to draw a dotted line. The status
+  panel shows the number of generation steps needed to create the interval.
+  Another pattern **matches** when, centered on some bold note `C'`, it contains
+  both endpoints at the **same absolute positions** and creates the interval in
+  the **same number of steps**. Matched pattern buttons are highlighted and are
+  the *only* pressable pattern buttons in this mode; pressing one keeps the
+  interval selected and switches both the pattern and the key to the match.
+  (Each matching pattern has exactly one matching center, and a pattern can
+  never match itself at another key — same generator + same steps force the
+  same center.)
+- **Scale Mode** — pick a bold note as the **target center** (it need not belong
+  to the active pattern) and a pattern button; the app selects the two points
+  of the active pattern forming the interval that would lead to that pattern at
+  that center in Interval Mode (fewest steps preferred), if one exists.
 
 ## Interpretation decisions
 Two points in the brief were ambiguous; these were resolved with the requester:
 1. **Bold notes = multiples of 6 (12 notes)** — reconciles "multiple of 12" with
    the later "select one of the 12 bolded notes" (72-EDO = 12 semitones × 6).
-2. **Interval match = same generator count `n` AND same position `d` (mod 72)**,
-   with each pattern's ccw/cw generation direction baked into the comparison.
-
-Scale Mode is implemented as the inverse of Interval Mode (find the interval that
-leads to the chosen pattern); the exact desired behavior here is the most
-open-ended part of the spec and is easy to adjust in `tryScaleSelect()`.
+2. **Interval match = same generation step count AND same absolute endpoint
+   positions**, with each pattern's ccw/cw generation direction baked in.
