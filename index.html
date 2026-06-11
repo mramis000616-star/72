@@ -104,12 +104,12 @@
      (The dot SET is symmetric either way; dir fixes which physical onset is the
       +1-generator onset, which is what makes cross-pattern interval matching
       direction-aware.)
-   - Generation order alternates outward from the center: chain index +1 is the
-     first-generated onset, -1 the second, +2 the third, ... so the number of
-     generation STEPS needed to produce chain index i is
-       stepNum(i) = i>0 ? 2i-1 : -2i.
-     An interval between two onsets is "created" once BOTH endpoints exist:
-       steps(A,B) = max(stepNum(iA), stepNum(iB)).
+   - Generation proceeds in ROUNDS: round r places i=+r and i=-r simultaneously.
+     The first round (r=1) creates i=±1, the second (r=2) creates i=±2, etc.
+     An interval between two onsets is "created" in the round when the LAST of
+     its endpoints is placed: round(A,B) = max(|iA|, |iB|).
+     This is the step count: the first interval of any size that appears in
+     round 1 is "step 1", round 2 is "step 2", etc.
    - Interval matching: another pattern T (centered at some bold note C')
      matches when both endpoints are onsets of T at their SAME ABSOLUTE
      positions and T creates the interval in the SAME number of steps.
@@ -145,8 +145,8 @@ for(const k of [5,7,17,19,29,31]){
   for(let x=1;x<N;x++) if(mod(g*x)===1){ modInverse[g]=x; break; }
 }
 
-/* Steps of alternating generation needed to produce chain index i. */
-const stepNum = i => i>0 ? 2*i-1 : -2*i;
+/* Generation round of chain index i: round r places i=+r and i=-r together.
+   Round = |i|, so step(A,B) = max(|iA|, |iB|). */
 
 /* Chain index of absolute position pos in pattern T centered at C, or null. */
 function idxOf(pos, T, C){
@@ -166,19 +166,19 @@ function onsetsOf(p, C){
 /* Matches for the interval (posA,posB) of pattern P centered at C.
    Returns {steps, map} where map is patternKey -> matching center C'.
    A pattern T matches at center C' (a bold note) when both endpoints are
-   onsets of T at the same absolute positions and T needs the same number of
-   alternating generation steps to create both of them. */
+   onsets of T at the same absolute positions and the interval is created in
+   the same generation round (max(|iA|, |iB|) == max(|jA|, |jB|)). */
 function matchesForInterval(posA, posB, P, C){
   const iA = idxOf(posA,P,C), iB = idxOf(posB,P,C);
   if(iA===null || iB===null || iA===iB) return {steps:null, map:new Map()};
-  const steps = Math.max(stepNum(iA), stepNum(iB));
+  const steps = Math.max(Math.abs(iA), Math.abs(iB));
   const map = new Map();
   for(const T of PATTERN_KEYS){
-    if(T === P) continue;          // a pattern never matches itself (same g+steps => same center)
+    if(T === P) continue;
     for(let Cp=0; Cp<N; Cp+=6){
       const jA = idxOf(posA,T,Cp), jB = idxOf(posB,T,Cp);
       if(jA===null || jB===null) continue;
-      if(Math.max(stepNum(jA), stepNum(jB)) === steps){ map.set(T,Cp); break; }
+      if(Math.max(Math.abs(jA), Math.abs(jB)) === steps){ map.set(T,Cp); break; }
     }
   }
   return {steps, map};
@@ -391,7 +391,7 @@ function updateInfo(){
       h+=`Click two onsets to draw an interval. (${intervalSel.length}/2 selected)`;
     } else {
       h+=`Interval ${intervalSel[0]}–${intervalSel[1]}: `;
-      h+=`created in <b>${currentSteps}</b> generation step(s).<br>`;
+      h+=`generation round <b>${currentSteps}</b> (step ${currentSteps}).<br>`;
       h+= matchInfo.size
         ? "Matches: "+[...matchInfo].map(([p,c])=>`<span class="tag">${p} @ key ${c}</span>`).join("")
           +"<br><span style='color:var(--muted)'>Click a highlighted pattern button to switch (interval is kept; key follows).</span>"
