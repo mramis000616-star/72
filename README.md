@@ -31,10 +31,17 @@ pos(i) = ( center + dir · i · g )  mod 72 ,   i = -m..m,  m = (k-1)/2
 The dot set is symmetric either way; `dir` fixes which physical onset is
 generated first, which is what makes interval matching direction-aware.
 
-Generation alternates outward from the center: chain index `+1` is the
-first-generated onset, `-1` the second, `+2` the third, … so producing chain
-index `i` takes `stepNum(i) = i>0 ? 2i-1 : -2i` steps. An interval is *created*
-once both endpoints exist: `steps(A,B) = max(stepNum(i_A), stepNum(i_B))`.
+Generation alternates outward from the center: chain index `+1` is placed by
+alternating step 1, `-1` by step 2, `+2` by step 3, … (`s(i) = i>0 ? 2i-1 : -2i`).
+An interval between chain indices is created at alternating step
+`max(s(i_A), s(i_B))`. The **first instance** of an interval spanning
+`n = |i_A - i_B|` indices is the pair straddling the center (created at
+alternating step `n`) and **counts as step 1**; an interval's step count is the
+number of alternating steps since that first instance, inclusive:
+
+```
+step(i_A, i_B) = max(s(i_A), s(i_B)) − |i_A − i_B| + 1
+```
 
 ## Modes (mutually exclusive; each deactivates **Change Key**)
 - **Change Key** — click a bold note to move the center of symmetry (one at a time).

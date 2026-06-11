@@ -104,12 +104,15 @@
      (The dot SET is symmetric either way; dir fixes which physical onset is the
       +1-generator onset, which is what makes cross-pattern interval matching
       direction-aware.)
-   - Generation proceeds in ROUNDS: round r places i=+r and i=-r simultaneously.
-     The first round (r=1) creates i=±1, the second (r=2) creates i=±2, etc.
-     An interval between two onsets is "created" in the round when the LAST of
-     its endpoints is placed: round(A,B) = max(|iA|, |iB|).
-     This is the step count: the first interval of any size that appears in
-     round 1 is "step 1", round 2 is "step 2", etc.
+   - Generation order alternates outward from the center: chain index +1 is
+     placed by alternating step 1, -1 by step 2, +2 by step 3, ... i.e.
+       s(i) = i>0 ? 2i-1 : -2i.
+     An interval between chain indices iA,iB is created at alternating step
+     max(s(iA), s(iB)). The FIRST instance of an interval spanning n = |iA-iB|
+     indices is the pair straddling the center, created at alternating step n;
+     it counts as STEP 1. The step count of any interval is therefore the
+     number of alternating steps since that first instance (inclusive):
+       step(iA,iB) = max(s(iA), s(iB)) - |iA-iB| + 1.
    - Interval matching: another pattern T (centered at some bold note C')
      matches when both endpoints are onsets of T at their SAME ABSOLUTE
      positions and T creates the interval in the SAME number of steps.
@@ -145,8 +148,12 @@ for(const k of [5,7,17,19,29,31]){
   for(let x=1;x<N;x++) if(mod(g*x)===1){ modInverse[g]=x; break; }
 }
 
-/* Generation round of chain index i: round r places i=+r and i=-r together.
-   Round = |i|, so step(A,B) = max(|iA|, |iB|). */
+/* Alternating step that places chain index i (+1 first, -1 second, ...). */
+const altStep = i => i>0 ? 2*i-1 : -2*i;
+/* Step count of an interval: alternating steps since the first instance of
+   its size (the center-straddling pair, created at step n), inclusive. */
+const stepOf = (iA,iB) =>
+  Math.max(altStep(iA), altStep(iB)) - Math.abs(iA-iB) + 1;
 
 /* Chain index of absolute position pos in pattern T centered at C, or null. */
 function idxOf(pos, T, C){
@@ -166,19 +173,19 @@ function onsetsOf(p, C){
 /* Matches for the interval (posA,posB) of pattern P centered at C.
    Returns {steps, map} where map is patternKey -> matching center C'.
    A pattern T matches at center C' (a bold note) when both endpoints are
-   onsets of T at the same absolute positions and the interval is created in
-   the same generation round (max(|iA|, |iB|) == max(|jA|, |jB|)). */
+   onsets of T at the same absolute positions and the interval has the same
+   step count (alternating steps since the first instance of its size). */
 function matchesForInterval(posA, posB, P, C){
   const iA = idxOf(posA,P,C), iB = idxOf(posB,P,C);
   if(iA===null || iB===null || iA===iB) return {steps:null, map:new Map()};
-  const steps = Math.max(Math.abs(iA), Math.abs(iB));
+  const steps = stepOf(iA,iB);
   const map = new Map();
   for(const T of PATTERN_KEYS){
     if(T === P) continue;
     for(let Cp=0; Cp<N; Cp+=6){
       const jA = idxOf(posA,T,Cp), jB = idxOf(posB,T,Cp);
-      if(jA===null || jB===null) continue;
-      if(Math.max(Math.abs(jA), Math.abs(jB)) === steps){ map.set(T,Cp); break; }
+      if(jA===null || jB===null || jA===jB) continue;
+      if(stepOf(jA,jB) === steps){ map.set(T,Cp); break; }
     }
   }
   return {steps, map};
@@ -391,7 +398,7 @@ function updateInfo(){
       h+=`Click two onsets to draw an interval. (${intervalSel.length}/2 selected)`;
     } else {
       h+=`Interval ${intervalSel[0]}–${intervalSel[1]}: `;
-      h+=`generation round <b>${currentSteps}</b> (step ${currentSteps}).<br>`;
+      h+=`step <b>${currentSteps}</b> of its interval size.<br>`;
       h+= matchInfo.size
         ? "Matches: "+[...matchInfo].map(([p,c])=>`<span class="tag">${p} @ key ${c}</span>`).join("")
           +"<br><span style='color:var(--muted)'>Click a highlighted pattern button to switch (interval is kept; key follows).</span>"
